@@ -1,0 +1,395 @@
+---
+title: "Data Analysis"
+author: "Ina Liao"
+date: "2024-02-05"
+output: pdf_document
+---
+
+
+```{r Setup, include=FALSE}
+knitr:::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=FALSE,fig.align = "center", dev = "cairo_pdf", fig.pos = "H")
+```
+
+```{r Install packages, message=FALSE}
+#install.packages("lubridate")
+#install.packages("ggplot2")
+#install.packages("forecast")
+#install.packages("here")
+#install.packages("knitr")
+#install.packages("kableExtra")
+#install.packages("dplyr")
+#install.packages("openxlsx")
+#install.packages("ggthemes")
+#install.packages("tidyr")
+#install.packages("GGally")
+#install.packages("tseries")
+#install.packages("blorr")
+library(lubridate)
+library(ggplot2)
+library(forecast) 
+library(here)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(openxlsx)
+library(ggthemes)
+library(tidyr)
+library(GGally)
+library(trend)
+library(tseries)
+library(blorr)   
+library(lmtest) 
+```
+
+```{r Import Data, echo=TRUE, results='hide'}
+raw_DUK<-read.csv(here('Data/Raw/load_DUK.csv'),stringsAsFactors = TRUE,skip=0,header=TRUE)
+head(raw_DUK)
+#column 45,46,47,48,49,50,51,52,53: electricity transmitted from other ISO/RTO
+
+raw_weather<-read.csv(here("Data/Processed Data/Processed_weather_2012-2022.xlsx"),stringsAsFactors = TRUE,skip=0,header=TRUE)
+head(raw_weather)
+```
+
+```{r Selected the needed data - Load}
+df_DUK<-raw_DUK[,c(3,5,8,9,10,11)]
+head(df_DUK)
+colnames(df_DUK)
+
+#change the date format as ymd
+df_DUK$Local.date<-dmy(df_DUK$Local.date)
+
+#combine date and time
+df_DUK$Local.time<-as.POSIXct(df_DUK$Local.time,format = "%d%b%Y %H:%M")
+df_DUK$Local.time<-format(df_DUK$Local.time,"%Y-%m-%d %H:%M")
+
+#rename column names 
+colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
+colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
+colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
+colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
+
+#set as numaric
+for (i in 3:6){
+  df_DUK[,i]<-as.numeric(df_DUK[,i])
+}
+
+#mutate forecast error 
+df_DUK<-df_DUK %>%
+  mutate(Forecast.Error=`Demand Forecast`- Demand)
+
+#mutate calendar event
+df_DUK$day_of_week <- wday(df_DUK$Local.date, label = FALSE)
+df_DUK<-df_DUK[,c(1:2,8,3:7)]
+
+head(df_DUK)
+```
+
+```{r Select the needed data - Weather}
+#change the date format as ymd
+raw_weather$Date<-paste(raw_weather$Year,raw_weather$Month,raw_weather$Day,sep="-")
+raw_weather$Date<-ymd(raw_weather$Date)
+
+#set the time format as hour:minute
+raw_weather$Time<-paste(raw_weather$Hour,raw_weather$Minute,sep=":")
+raw_weather$Time<-as.POSIXct(raw_weather$Time, format = "%H:%M")
+raw_weather$Time<-format(raw_weather$Time,"%H:%M")
+
+#combine date and time
+raw_weather$Time2<-paste(raw_weather$Date,raw_weather$Time, sep=" ")
+df_weather<-raw_weather[,c(9,11,7,8)]
+head(df_weather)
+
+#mutate calendar event
+df_weather$day_of_week<-wday(df_weather$Date, label = FALSE)
+
+#reorder dataframe
+df_weather<-df_weather[,c(1:2,5,3:4)]
+```
+
+
+```{r Missing Data - Load}
+#create time dataframe
+start_time_DUK<-as.POSIXct("2015-07-01 01:00:00")
+end_time_DUK<-as.POSIXct("2023-10-05 00:00:00")
+df_time_DUK<-data.frame(Local.time=seq(from=start_time_DUK, to=end_time_DUK, by="1 hour"))
+df_time_DUK$Local.time<-format(df_time_DUK$Local.time,"%Y-%m-%d %H:%M")
+
+#merge dataframes
+df_DUK_merge<-left_join(df_time_DUK,df_DUK,by="Local.time")
+head(df_DUK_merge)
+
+#check if there is missing data
+df_DUK_merge %>%
+  filter(is.na(Local.time)) 
+#no missing data
+```
+
+```{r Missing Data - Weather}
+#create time dataframe
+start_time_weather<-as.POSIXct("2012-01-01 0:30")
+end_time_weather<-as.POSIXct("2022-12-31 23:30")
+df_time_weather<-data.frame(Time2=seq(from=start_time_weather, to=end_time_weather, by="1 hour"))
+df_time_weather$Time2<-format(df_time_weather$Time2,"%Y-%m-%d %H:%M")
+
+#merge dataframes
+df_weather_merge<-left_join(df_time_weather,df_weather,by="Time2")
+head(df_weather_merge)
+
+#check if there is missing data
+df_weather_merge %>%
+  filter(is.na(Date)) 
+#missing the data on 2012-02-29, 2016-02-29, 2020-02-29
+```
+
+```{r Set Plot Theme}
+my_plot_theme<- theme_calc()+
+  theme(
+    #plot background
+    plot.background = element_rect(color="gray"),
+    
+    #plot title
+    plot.title=element_text(color="black",hjust=0.5,vjust=1),
+    
+    #axis labels
+    axis.title.x = element_text(size = 8),
+    axis.title.y = element_text(size = 8),
+    
+    #gridlines 
+    panel.grid.major=element_line("white"),
+    panel.grid.minor = element_line("white"),
+    axis.ticks=element_line(color="gray"),
+    
+    #legend 
+    legend.key=element_rect(color="white"),
+    legend.background = element_rect(color="white"),
+    legend.text = element_text(size = 8),
+    legend.position="right"
+      )
+theme_set(my_plot_theme)
+```
+
+```{r Daily Average - Load}
+#can't merge two datasets by time since the recorded hours are different (i.e., 01:00 and 01:30)
+#calculate the daily average then merge the dataframes
+
+#the outliers haven't been removed
+#the missing value will be removed when computing the mean
+
+df_daily_DUK<-df_DUK_merge %>%
+  
+  #calculate daily average
+  group_by(Local.date,day_of_week) %>%
+  summarize(
+    demand_forecast=mean(`Demand Forecast`, na.rm=TRUE),
+    demand=mean(Demand, na.rm=TRUE),
+    net_generation=mean(`Net Generation`, na.rm=TRUE),
+    total_interchange=mean(`Total Interchange`, na.rm=TRUE),
+  ) %>%
+  
+  #mutate forecast error 
+  mutate(forecast_error=demand_forecast- demand)
+head(df_daily_DUK)
+```
+
+```{r Daily Average - Weather}
+df_daily_weather<-df_weather_merge %>%
+  group_by(Date,day_of_week) %>%
+  summarize(
+    dew_point=mean(Dew.Point, na.rm=TRUE),
+    wind_speed=mean(Wind.Speed, na.rm=TRUE)
+  ) 
+head(df_daily_weather)
+```
+
+```{r Merge Two Dataframe}
+colnames(df_daily_DUK)[colnames(df_daily_DUK) == "Local.date"] <- "Date"
+df_all<-left_join(df_daily_weather,df_daily_DUK,by="Date")
+
+#weather and load data have different starting and ending date 
+#weather data: 2012-01-01 - 2022-12-31
+#load data: 2015-07-01 - 2023-10-04
+
+#trim the dataframe
+start_date<-ymd(first(df_daily_DUK$Date))
+#end_date<-ymd(last(df_daily_weather$Date))  #return NA
+
+#create another variable to identify weekends and weekdays
+df<-df_all %>%
+  filter(Date>=start_date) %>%
+  mutate(weekday_weekend=ifelse(day_of_week.x %in% 1:5,0,1)
+    )
+df<-df[,c(1:2,11,3:4,6:10)]
+head(df)
+tail(df) #last day is 2022-12-31	
+```
+
+```{r Time Series Object - TS}
+#ts
+ts_all<-ts(df[,4:10], start=c(2015,07),end=c(2022,12),frequency=365) #correct frequency?
+autoplot(ts_all)
+
+#electricity 
+plot_ts_electricity<-autoplot(ts_all[,3:7])+
+  labs(y="electicity (MWh)")
+plot_ts_electricity
+
+#weather
+plot_ts_weather<-autoplot(ts_all[,1:2])
+plot_ts_weather
+
+plot_ts_electricity_weather<-autoplot(ts_all[,4],series="electricity demand")+
+  autolayer(ts_all[,7],series="forecast error")+
+  autolayer(ts_all[,1],series="dew point")+
+  autolayer(ts_all[,2],series="wind speed")
+plot_ts_electricity_weather
+
+#remove outliers?
+#demand froecast is around 1-2 MWh: 2018-03-11, 2019-03-10, 2018-04-05
+#demand, net generation, and total interchange are around the same level in 2018-03-11, 2019-03-10
+
+```
+
+```{r Time Series Object - MSTS}
+#msts
+msts_all<-msts(df[,4:10], seasonal.periods=12, start=c(2015,07),end=c(2022,12))
+
+#electricity 
+plot_msts_electricity<-autoplot(msts_all[,3:7])+
+  labs(y="electicity (MWh)")
+plot_msts_electricity
+
+#weather
+plot_msts_weather<-autoplot(msts_all[,1:2])
+plot_msts_weather
+
+plot_msts_electricity_weather<-autoplot(msts_all[,4],series="electricity demand")+
+  autolayer(msts_all[,7],series="forecast error")+
+  autolayer(msts_all[,1],series="dew point")+
+  autolayer(msts_all[,2],series="wind speed")
+plot_msts_electricity_weather
+
+```
+
+```{r ACF and PACF}
+#place plot side by side
+#par(mfrow=c(7,2)) 
+#error: Error in plot.new() : figure margins too large
+
+for(i in 1:7){ 
+  #plot(ts_all$Date,ts_all[,i],type="l",col="black",
+       #ylab=NA,xlab=NA,main=paste(colnames(ts_all[i]),sep=" ")) #error: the length of df and ts are different 
+  Acf(ts_all[,i],lag.max=40,main=paste("ACF for",colnames(df[,i+3]),sep=" "),ylim=c(-0.5,1))
+  Pacf(ts_all[,i],lag.max=40,main=paste("PACF for",colnames(df[,i+3]),sep=" "),ylim=c(-0.5,1))
+}
+```
+1. Dew point: does not have significant trend but have a drop in 2022; has a strong time-dependent (correlation still high in the higher lag); might not have seasonality 
+2. Wind speed: does not have significant trend; might have seasonal components
+3. Demand, demand forecast, and net generation might have an increased trend and have seasonal components
+4. Demand, forecast demand, forecast error, and net generation have a peak in late 2022
+ 
+
+
+```{r Stationary test}
+#seasonal Mann-Kendall
+#season 1-10?
+smk_dew<-summary(trend::smk.test(ts_all[,1])) 
+smk_wind<-summary(trend::smk.test(ts_all[,2])) 
+smk_demandforecast<-summary(trend::smk.test(ts_all[,3]))
+smk_demand<-summary(trend::smk.test(ts_all[,4]))
+smk_generation<-summary(trend::smk.test(ts_all[,5]))
+smk_interchange<-summary(trend::smk.test(ts_all[,6]))
+smk_forecast_error<-summary(trend::smk.test(ts_all[,7]))
+
+#ADF test
+ADF_dew<-print(adf.test(ts_all[,1],alternative = "stationary"))
+ADF_wind<-print(adf.test(ts_all[,2],alternative = "stationary"))
+ADF_demandforecast<-print(adf.test(ts_all[,3],alternative = "stationary"))
+ADF_demand<-print(adf.test(ts_all[,4],alternative = "stationary"))
+ADF_generation<-print(adf.test(ts_all[,5],alternative = "stationary"))
+ADF_interchange<-print(adf.test(ts_all[,6],alternative = "stationary"))
+ADF_forecast_error<-print(adf.test(ts_all[,7],alternative = "stationary"))
+```
+
+From Seasonal Mann-Kendall test, all p-values are greater than 0.05, and thus we do not have enough evidence to reject the null hypothesis that the series is stationary. From the Augmented Dickey-Fuller (ADF) test, all p-values are smaller than 0.05, meaning that we have sufficient evident to support that the series do not have stochastic trend. (the result from two tests all refer that the series are stationary)
+
+```{r Mitigate Autocorrelation - Linear}
+decompose_dew<-stl(ts_all[,1],s.window="periodic") #is s.window argument correct?
+decompose_wind<-stl(ts_all[,2],s.window="periodic")
+decompose_demandforecast<-stl(ts_all[,3],s.window="periodic")
+decompose_demand<-stl(ts_all[,4],s.window="periodic")
+decompose_generation<-stl(ts_all[,5],s.window="periodic")
+decompose_interchange<-stl(ts_all[,6],s.window="periodic")
+
+plot(decompose_dew,main=paste(colnames(df[,1+3])))
+plot(decompose_wind,main=paste(colnames(df[,2+3])))
+plot(decompose_demandforecast,main=paste(colnames(df[,3+3])))
+plot(decompose_demand,main=paste(colnames(df[,4+3])))
+plot(decompose_generation,main=paste(colnames(df[,5+3])))
+plot(decompose_interchange,main=paste(colnames(df[,6+3])))
+```
+
+```{r Mitigate Autocorrelation - Differencing}
+#given that all the series are not stochastic trend, is it necessary to use differencing method to detrend?
+#using first order approach
+
+ts_diff<-diff(ts_all[,1:7],lag = 1,differences = 1)
+
+#plot original trend and differenced trend
+#autoplot does not work in for loop 
+plot_dew_diff<-autoplot(ts_diff[,1],series="Differenced Series")+
+    autolayer(ts_all[,1],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,1+3]),sep="_"))
+plot_dew_diff
+
+plot_wind_diff<-autoplot(ts_diff[,1],series="Differenced Series")+
+    autolayer(ts_all[,2],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,2+3]),sep="_"))
+plot_wind_diff
+
+plot_deamndforecast_diff<-autoplot(ts_diff[,3],series="Differenced Series")+
+    autolayer(ts_all[,3],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,3+3]),sep="_"))
+plot_deamndforecast_diff
+
+plot_deamnd_diff<-autoplot(ts_diff[,4],series="Differenced Series")+
+    autolayer(ts_all[,4],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,4+3]),sep="_"))
+plot_deamnd_diff
+
+plot_generation_diff<-autoplot(ts_diff[,5],series="Differenced Series")+
+    autolayer(ts_all[,5],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,5+3]),sep="_"))
+plot_deamnd_diff
+
+plot_interchange_diff<-autoplot(ts_diff[,6],series="Differenced Series")+
+    autolayer(ts_all[,6],series="Time Series")+
+    labs(x=NA,color="",title=paste(colnames(df[,6+3]),sep="_"))
+plot_interchange_diff
+
+#for(i in 1:4){
+  #plot(ts_diff[,i],type="l",col="black",
+       #ylab=NA,xlab=NA,main=paste(colnames(df[,i+3]),sep="_"))+
+     #plot(ts_all[,i],type="l",col="pink",
+       #ylab=NA,xlab=NA,main=paste(colnames(df[,i+3]),sep="_"))
+```
+After differencing the series, the trend level of dew points has been decreased. 
+
+```{r Multilinear Regression}
+head(df)
+model_all<-lm(demand~wind_speed+dew_point+weekday_weekend+demand_forecast+net_generation+total_interchange,data=df)
+summary(model_all)
+
+model_factors<-lm(demand~wind_speed+dew_point+weekday_weekend,data=df)
+summary(model_factors)
+
+#linear regression: can we assume that independent variables are normally distributed
+```
+1. On average, weekend that falls above the data set has an 292.172 greater electricity demand than weekday while holding other explanatory variables constant. The slope parameter is significantly different than zero at a significance level of 0.05 (p-value<0.05).
+2. 7.3% of the variation in the electricity demand is explained by the model, indicating that the model may not be a good fit for predicting electricity demand.
+
+```{r Residuals vs fitted}
+vif(model_all)
+vif(model_factors)
+```
+
+There might have a multicollinearity occur between variables since all variables have relatively low variation inflation factor.
