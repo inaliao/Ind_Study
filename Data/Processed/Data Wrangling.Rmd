@@ -1,0 +1,224 @@
+---
+title: "Data Analysis"
+author: "Ina Liao"
+date: "2024-02-05"
+output: pdf_document
+---
+
+
+```{r Setup, include=FALSE}
+knitr:::opts_chunk$set(tidy.opts=list(width.cutoff=80), tidy=FALSE,fig.align = "center", dev = "cairo_pdf", fig.pos = "H")
+```
+
+```{r Install packages, message=FALSE}
+#install.packages("lubridate")
+#install.packages("ggplot2")
+#install.packages("here")
+#install.packages("knitr")
+#install.packages("kableExtra")
+#install.packages("dplyr")
+#install.packages("openxlsx")
+#install.packages("ggthemes")
+#install.packages("tidyr")
+library(lubridate)
+library(ggplot2)
+library(forecast) 
+library(here)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(openxlsx)
+library(ggthemes)
+library(tidyr)
+```
+
+```{r Import Data}
+here()
+raw_DUK<-read.csv(here('Data/Raw/load_DUK.csv'),stringsAsFactors = TRUE,skip=0,header=TRUE)
+head(raw_DUK)
+```
+
+```{r Selected the needed data}
+df_DUK<-raw_DUK[,c(5,8,9,10,11,45,46,47,48,49,50,51,52,53)]
+
+#change the date format
+df_DUK<-mutate(df_DUK,Local.Time=Local.time)
+df_DUK<-separate(data=df_DUK,col=Local.time,into=c("Date","Time"),sep=" ") 
+df_DUK$Date<-dmy(df_DUK$Date)
+df_DUK$Time<-hms(df_DUK$Time)
+
+#change the order
+df_DUK<-df_DUK[,c(1:2,16,3:15)]
+
+#rename column names 
+colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
+colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
+colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
+colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
+```
+
+```{r Import Data, echo=TRUE, results='hide'}
+raw_DUK<-read.csv(here('Data/Raw/load_DUK.csv'),stringsAsFactors = TRUE,skip=0,header=TRUE)
+head(raw_DUK)
+#column 45,46,47,48,49,50,51,52,53: electricity transmitted from other ISO/RTO
+
+raw_weather<-read.csv(here("Data/Processed Data/Processed_weather_2012-2022.xlsx"),stringsAsFactors = TRUE,skip=0,header=TRUE)
+head(raw_weather)
+```
+
+```{r Selected the needed data - Load}
+df_DUK<-raw_DUK[,c(3,5,8,9,10,11)]
+head(df_DUK)
+colnames(df_DUK)
+
+#change the date format as ymd
+df_DUK$Local.date<-dmy(df_DUK$Local.date)
+
+#combine date and time
+df_DUK$Local.time<-as.POSIXct(df_DUK$Local.time,format = "%d%b%Y %H:%M")
+df_DUK$Local.time<-format(df_DUK$Local.time,"%Y-%m-%d %H:%M")
+
+#rename column names 
+colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
+colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
+colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
+colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
+
+#set as numaric
+for (i in 3:6){
+  df_DUK[,i]<-as.numeric(df_DUK[,i])
+}
+
+#mutate forecast error 
+df_DUK<-df_DUK %>%
+  mutate(Forecast.Error=`Demand Forecast`- Demand)
+
+#mutate calendar event
+df_DUK$day_of_week <- wday(df_DUK$Local.date, label = FALSE)
+df_DUK<-df_DUK[,c(1:2,8,3:7)]
+
+head(df_DUK)
+```
+
+```{r Select the needed data - Weather}
+#change the date format as ymd
+raw_weather$Date<-paste(raw_weather$Year,raw_weather$Month,raw_weather$Day,sep="-")
+raw_weather$Date<-ymd(raw_weather$Date)
+
+#set the time format as hour:minute
+raw_weather$Time<-paste(raw_weather$Hour,raw_weather$Minute,sep=":")
+raw_weather$Time<-as.POSIXct(raw_weather$Time, format = "%H:%M")
+raw_weather$Time<-format(raw_weather$Time,"%H:%M")
+
+#combine date and time
+raw_weather$Time2<-paste(raw_weather$Date,raw_weather$Time, sep=" ")
+df_weather<-raw_weather[,c(9,11,6,7,8)]
+head(df_weather)
+
+#mutate calendar event
+df_weather$day_of_week<-wday(df_weather$Date, label = FALSE)
+
+#reorder dataframe
+df_weather<-df_weather[,c(1:2,6,3:5)]
+```
+
+
+```{r Missing Data - Load}
+#create time dataframe
+start_time_DUK<-as.POSIXct("2015-07-01 01:00:00")
+end_time_DUK<-as.POSIXct("2023-10-05 00:00:00")
+df_time_DUK<-data.frame(Local.time=seq(from=start_time_DUK, to=end_time_DUK, by="1 hour"))
+df_time_DUK$Local.time<-format(df_time_DUK$Local.time,"%Y-%m-%d %H:%M")
+
+#merge dataframes
+df_DUK_merge<-left_join(df_time_DUK,df_DUK,by="Local.time")
+head(df_DUK_merge)
+
+#check if there is missing data
+df_DUK_merge %>%
+  filter(is.na(Local.time)) 
+#no missing data
+```
+
+```{r Missing Data - Weather}
+#create time dataframe
+start_time_weather<-as.POSIXct("2012-01-01 0:30")
+end_time_weather<-as.POSIXct("2022-12-31 23:30")
+df_time_weather<-data.frame(Time2=seq(from=start_time_weather, to=end_time_weather, by="1 hour"))
+df_time_weather$Time2<-format(df_time_weather$Time2,"%Y-%m-%d %H:%M")
+
+#merge dataframes
+df_weather_merge<-left_join(df_time_weather,df_weather,by="Time2")
+head(df_weather_merge)
+
+#check if there is missing data
+df_weather_merge %>%
+  filter(is.na(Date)) 
+#missing the data on 2012-02-29, 2016-02-29, 2020-02-29
+#check if the NAs have been dropped in the dataframe df
+```
+
+
+```{r Daily Average - Load}
+#can't merge two datasets by time since the recorded hours are different (i.e., 01:00 and 01:30)
+#calculate the daily average then merge the dataframes
+
+#the outliers haven't been removed
+#the missing value will be removed when computing the mean
+
+df_daily_DUK<-df_DUK_merge %>%
+  
+  #calculate daily average
+  group_by(Local.date,day_of_week) %>%
+  summarize(
+    demand_forecast=mean(`Demand Forecast`, na.rm=TRUE),
+    demand=mean(Demand, na.rm=TRUE),
+    net_generation=mean(`Net Generation`, na.rm=TRUE),
+    total_interchange=mean(`Total Interchange`, na.rm=TRUE),
+  ) %>%
+  
+  #mutate forecast error 
+  mutate(forecast_error=demand_forecast- demand)
+head(df_daily_DUK)
+```
+
+
+```{r Daily Average - Weather}
+standard_temp<-(65-32)*(5/9)
+df_daily_weather<-df_weather_merge %>%
+  group_by(Date,day_of_week) %>%
+  summarize(
+    dew_point=mean(Dew.Point, na.rm=TRUE),
+    wind_speed=mean(Wind.Speed, na.rm=TRUE),
+    temperature=mean(Temperature,na.rm=TRUE)
+  ) %>%
+  mutate(hdd=ifelse(temperature>standard_temp, temperature-standard_temp,0),
+         cdd=ifelse(temperature<standard_temp, standard_temp-temperature,0)) %>%
+  mutate(month=format(Date,"%Y-%m")) #for monthly calculation
+
+head(df_daily_weather)
+```
+
+
+
+```{r Merge Daily Dataframe}
+colnames(df_daily_DUK)[colnames(df_daily_DUK) == "Local.date"] <- "Date"
+df_all<-left_join(df_daily_weather,df_daily_DUK,by="Date")
+
+#weather and load data have different starting and ending date 
+#weather data: 2012-01-01 - 2022-12-31
+#load data: 2015-07-01 - 2023-10-04
+
+#trim the dataframe
+start_date<-ymd(first(df_daily_DUK$Date))
+#end_date<-ymd(tail(df_daily_weather$Date[96432,])  #return NA
+
+#create another variable to identify weekends and weekdays
+df<-df_all %>%
+  filter(Date>=start_date) %>%
+  mutate(weekday_weekend=ifelse(day_of_week.x %in% 1:5,0,1)
+    )
+df<-df[,c(1,8,2,15,3:7,10:14)]
+head(df)
+tail(df) #last day is 2022-12-31	
+```
