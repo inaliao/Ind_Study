@@ -59,7 +59,6 @@ raw_data<-read.csv(here('Data/Processed/Load_weather.csv'),stringsAsFactors = TR
 df<-raw_data[,2:15]
 head(raw_data)
 ```
-
 ```{r Set Plot Theme}
 my_plot_theme<- theme_calc()+
   theme(
@@ -88,6 +87,8 @@ theme_set(my_plot_theme)
 ```
 
 
+
+
 ```{r Time Series Object - TS}
 ts_all<-ts(df[,5:14], start=c(2015,07),frequency=365) 
 #do not specify end=c(2022,12)
@@ -108,20 +109,39 @@ plot_ts_weather
 msts_all<-msts(df[,5:14], seasonal.periods=c(7,365), start=c(2015,07,01))
 #account for two seasonal periods 
 #,end=c(2022,12,31)
+#is using hourly data: seasonal periods=c(7, 168, 8760)
+
 
 #electricity 
-plot_msts_electricity<-autoplot(msts_all[,6:10])+
-  labs(y="electicity (MWh)")
-plot_msts_electricity
+autoplot(msts_all[,6],series="Demand Forecast")+
+  autolayer(msts_all[,7],series="Actual Demand")+
+  labs(y="electicity (MWh)",title="Demand Forecast and Actual Demand")
+
 
 #weather
-plot_msts_weather<-autoplot(msts_all[,1:5])
-plot_msts_weather 
-#this plot does not have any meaning given that the unit of the variables are different
+head(msts_all)
+par(mfrow=c(2,2))
+autoplot(msts_all[,1])+labs(title="Dew Point",y="°C Td")
+autoplot(msts_all[,2])+labs(title="Wind Speed",y="m/s")
+autoplot(msts_all[,3])+
+  labs(title="Temperature",y="°C")+
+  geom_hline(yintercept = 18, linetype = "dashed", color = "blue")
+autoplot(msts_all[,5],series="CDD")+
+  autolayer(msts_all[,4],series="HDD")+
+  labs(y="°C")
 
 ```
 
 ```{r ACF and PACF}
+#msts
+for(i in 1:7){ 
+  par(mfrow=c(1,2))
+  Acf(msts_all[,i],lag.max=40,main=paste("ACF for",colnames(df[i+4]),sep=" "),ylim=c(-0.5,1))
+  Pacf(msts_all[,i],lag.max=40,main=paste("PACF for",colnames(df[i+4]),sep=" "),ylim=c(-0.5,1))
+}
+
+
+#ts
 for(i in 1:10){ 
   par(mfrow=c(1,2))
   Acf(ts_all[,i],lag.max=40,main=paste("ACF for",colnames(df[i+4]),sep=" "),ylim=c(-0.5,1))
@@ -130,20 +150,21 @@ for(i in 1:10){
 ```
 ```{r Detrand and deseason}
 #decompose 
-demand_decompose<-decompose(ts_all[,7],type="additive")
+demand_decompose<-decompose(msts_all[,7],type="additive")
 plot_demand_decompose<-plot(demand_decompose)
 
 #deseason
 demand_deseason<- seasadj(demand_decompose)
 
 #plot
-plot_grid(
-  autoplot(Acf(ts_all[,7],lag=40,plot=FALSE),main="Original Electricity Demand"),
-  autoplot(Pacf(ts_all[,7],lag=40,plot=FALSE),main="Original Electricity Demand"),
-  autoplot(Acf(demand_deseason,lag=40,plot=FALSE),main="Deseason Electricity Demand"),
-  autoplot(Pacf(demand_deseason,lag=40,plot=FALSE),main="Deseason Electricity Demand"),
-  nrow=3
-)
+par(mfrow=c(1,2))
+Acf(demand_deseason,lag=40,main=paste("ACF for deseason demand"),ylim=c(-0.5,1))
+Pacf(demand_deseason,lag=40,main=paste("PACF for deseason demand"),ylim=c(-0.5,1))
+
+#plot_grid(
+  #autoplot(Acf(msts_all[,7],lag=40,plot=FALSE),main="Original Electricity Demand"),
+  #autoplot(Pacf(msts_all[,7],lag=40,plot=FALSE),main="Original Electricity Demand"),
+  #nrow=2)
 ```
 
  
@@ -174,9 +195,11 @@ ts_monthly_all<-ts(df_monthly[,2:10], start=c(2015,07),end=c(2022,12),frequency=
 
 ```{r Stationary test}
 #Mann-Kendall
-summary(MannKendall(ts_all)) #reject the null hypothesis, supporting the presence of a trend
+summary(MannKendall(ts_all[,7])) #reject the null hypothesis, supporting the presence of a trend
 
+head(ts_monthly_all)
 #seasonal Mann-Kendall
+#question
 #use monthly data for smk 
 for(i in 1:9){
   summary(trend::smk.test(ts_monthly_all[,i]))
@@ -200,7 +223,8 @@ cat("Number of seasonal differencing needed:", ns_diff)
 clean_demand<-tsclean(ts_monthly_all[,7])
 plot_demand<-autoplot(clean_demand, series="Demand Clean") +
   autolayer(ts_monthly_all[,7], series="Demand raw") +
-  ylab("Electricity Consumption (MWh)")
+  labs(title="Electricity Demand")+
+  ylab("Electricity (MWh)")
 plot_demand
 ```
 
@@ -285,13 +309,29 @@ corrplot(correlation_matrix_err,method="color",
 ```
 
 ```{r Training and Testing Data}
+#original series
 #training 
-msts_training<-msts(demand_deseason, seasonal.periods=c(7,365),
-                   start=c(2015,07,01),end=c(2020,12,31))
+#msts_training<-msts(df[,11], seasonal.periods=c(7,365),
+                   #start=c(2015,07,01),end=c(2020,12,31))
+nobs <- nrow(df[,11])
+nfor <- 365*2
+
+msts_training<-subset(msts_all[,7], end=length(msts_all[,7])-nfor)
+msts_testing<-subset(msts_all[,7], start=length(msts_all[,7])-nfor+1)
 
 #testing
-msts_testing<-msts(demand_deseason, seasonal.periods=c(7,365),
-                   start=c(2021,01,01),end=c(2022,12,31))
+#msts_testing<-msts(df[,11], seasonal.periods=c(7,365),
+                   #start=c(2021,01,01),end=c(2022,12,31))
+
+#deseason series
+
+#msts_deseason_training<-msts(demand_deseason, seasonal.periods=c(7,365),
+                   #start=c(2015,07,01),end=c(2020,12,31))
+
+#testing
+#msts_deseason_testing<-msts(demand_deseason, seasonal.periods=c(7,365),
+                   #start=c(2021,01,01),end=c(2022,12,31))
+
 
 #demand
 autoplot(msts_training)
@@ -307,6 +347,15 @@ ETS_fit<-stlf(msts_training, h=365*2)
 ```{r ARIMA and FOURIER terms}
 #K=c(2,4)
 #fit ARIMA with original time series 
+#ARIMA_Four_fit_1<-auto.arima(msts_deseason_training,
+                           #seasonal=FALSE, #because ARIMA can not handle seasonality 
+                           #xreg=fourier(msts_training,K=c(2,4)))
+#forecast with ARIMA_fit
+#ARIMA_Four_forecast_1<-forecast(ARIMA_Four_fit_1,
+                              #xreg=fourier(msts_deseason_training,K=c(2,4),h=365*2),
+                              #h=365*2) 
+
+
 ARIMA_Four_fit_1<-auto.arima(msts_training,
                            seasonal=FALSE, #because ARIMA can not handle seasonality 
                            xreg=fourier(msts_training,K=c(2,4)))
@@ -314,6 +363,7 @@ ARIMA_Four_fit_1<-auto.arima(msts_training,
 ARIMA_Four_forecast_1<-forecast(ARIMA_Four_fit_1,
                               xreg=fourier(msts_training,K=c(2,4),h=365*2),
                               h=365*2) 
+
 
 #K=c(2,12)
 #fit ARIMA with original time series 
@@ -331,13 +381,40 @@ ARIMA_Four_forecast_2<-forecast(ARIMA_Four_fit_2,
 head(msts_all)
 
 #all variables have the same time frame
-msts_temp_training<-msts(df[,7], seasonal.periods=c(7,365),
-                   start=c(2015,07,01),end=c(2020,12,31))
+#temperature has the highest correlation
+#msts_temp_training<-msts(df[,7], seasonal.periods=c(7,365),
+                   #start=c(2015,07,01),end=c(2020,12,31))
 
-msts_temp_testing<-msts(df[,7], seasonal.periods=c(7,365),
-                   start=c(2021,01,01),end=c(2022,12,31))
+#msts_temp_testing<-msts(df[,7], seasonal.periods=c(7,365),
+                   #start=c(2021,01,01),end=c(2022,12,31))
+
+
+
+msts_temp_training<-subset(msts_all[,3], end=length(msts_all[,7])-nfor)
+msts_temp_testing<-subset(msts_all[,3], start=length(msts_all[,7])-nfor+1)
+
 
 #K=c(2,4)
+#fit ARIMA with original time series 
+#ARIMA_Four_fit_XREG_1<-auto.arima(msts_deseason_training,
+                         #  seasonal=FALSE,
+                           #combine fourier and exogenous variable time series  
+                        #   xreg=as.matrix(cbind(fourier(msts_deseason_training,K=c(2,4)),
+                                          #      msts_temp_training)))  
+
+#generate fourier terms
+#fourier_terms_1<-fourier(msts_deseason_training, K=c(2,4), h = 365*2)
+#generate forecast
+#temp_forecast_1<-forecast(msts_temp_training, h = 365*2)
+#combine fourier terms and forecasts into a numeric matrix
+#xreg_matrix_1<-as.matrix(cbind(fourier_terms_1, temp_forecast_1$mean))
+
+#forecast with ARIMA_fit_XREG
+#ARIMA_Four_forecast_XREG_1<-forecast(ARIMA_Four_fit_XREG_1,
+                                  # xreg = xreg_matrix_1,
+                                  # h = 365*2)
+
+
 #fit ARIMA with original time series 
 ARIMA_Four_fit_XREG_1<-auto.arima(msts_training,
                            seasonal=FALSE,
@@ -386,6 +463,15 @@ ARIMA_Four_forecast_XREG_2<-forecast(ARIMA_Four_fit_XREG_2,
 
 
 #K=c(2,4)
+#NN_fit_1<-nnetar(msts_deseason_training,
+               #  p=1,
+               #  P=0,
+               #  xreg=fourier(msts_deseason_training,K=c(2,4)))
+
+#NN_forecast_1<-forecast(NN_fit_1,
+                       # xreg=fourier(msts_deseason_training,K=c(2,4),h=365*2), 
+                       # h=365*2)
+
 NN_fit_1<-nnetar(msts_training,
                  p=1,
                  P=0,
@@ -406,6 +492,63 @@ NN_forecast_2<-forecast(NN_fit_2,
                         h=365*2)
 ```
 
+```{r Neural Network + XREG}
+#K=c(2,4)
+#NN_fit_XREG_1<-nnetar(msts_deseason_training,
+                 #p=1,
+                 #P=0,
+                 #xreg=as.matrix(cbind(fourier(msts_deseason_training,K=c(2,4)),
+                                     # msts_temp_training)))
+
+#generate fourier terms
+#fourier_terms_NN_1<-fourier(msts_deseason_training, K=c(2,4), h = 365*2)
+#generate forecast
+#temp_forecast_NN_1<-forecast(msts_temp_training, h = 365*2)
+#combine fourier terms and forecasts into a numeric matrix
+#xreg_matrix_NN_1<-as.matrix(cbind(fourier_terms_NN_1, temp_forecast_NN_1$mean))
+
+#NN_forecast_XREG_1<-forecast(NN_fit_XREG_1,
+                           #  xreg=xreg_matrix_NN_1, 
+                           #  h=365*2)
+
+
+NN_fit_XREG_1<-nnetar(msts_training,
+                 p=1,
+                 P=0,
+                 xreg=as.matrix(cbind(fourier(msts_training,K=c(2,4)),
+                                      msts_temp_training)))
+
+#generate fourier terms
+fourier_terms_NN_1<-fourier(msts_training, K=c(2,4), h = 365*2)
+#generate forecast
+temp_forecast_NN_1<-forecast(msts_temp_training, h = 365*2)
+#combine fourier terms and forecasts into a numeric matrix
+xreg_matrix_NN_1<-as.matrix(cbind(fourier_terms_NN_1, temp_forecast_NN_1$mean))
+
+NN_forecast_XREG_1<-forecast(NN_fit_XREG_1,
+                             xreg=xreg_matrix_NN_1, 
+                             h=365*2)
+
+
+
+#K=c(2,12)
+NN_fit_XREG_2<-nnetar(msts_training,
+                 p=1,
+                 P=0,
+                 xreg=as.matrix(cbind(fourier(msts_training,K=c(2,12)),
+                                      msts_temp_training)))
+
+#generate fourier terms
+fourier_terms_NN_2<-fourier(msts_training, K=c(2,12), h = 365*2)
+#generate forecast
+temp_forecast_NN_2<-forecast(msts_temp_training, h = 365*2)
+#combine fourier terms and forecasts into a numeric matrix
+xreg_matrix_NN_2<-as.matrix(cbind(fourier_terms_NN_2, temp_forecast_NN_2$mean))
+
+NN_forecast_XREG_2<-forecast(NN_fit_XREG_2,
+                             xreg=xreg_matrix_NN_2, 
+                             h=365*2)
+```
 
 ```{r Plot Forecast Results}
 #filter the original time series data to include only the forecast period
@@ -414,24 +557,42 @@ forecast_end<-end(ARIMA_Four_forecast_1$mean)
 msts_forecast<-window(msts_all[,7],start = forecast_start,end = forecast_end)
 head(msts_all)
 
+
+#add the seasonality back 
+#ETS_fit$mean<-ETS_fit$mean+demand_decompose$seasonal
+#ARIMA_Four_forecast_1$mean<-ARIMA_Four_forecast_1$mean+demand_decompose$seasonal
+#ARIMA_Four_forecast_XREG_1$mean<-ARIMA_Four_forecast_XREG_1$mean+demand_decompose$seasonal
+#NN_forecast_1$mean<-NN_forecast_1$mean+demand_decompose$seasonal
+#NN_forecast_XREG_1$mean<-NN_forecast_XREG_1$mean+demand_decompose$seasonal
+
+
 #plot forecasting result
+#question
 #K=c(2,4)
 autoplot(msts_forecast) +
   autolayer(ETS_fit, series="STL + ETS",PI=FALSE)
+
+autoplot(msts_forecast,ylim=c(-5000,15000)) +
+  autolayer(ARIMA_Four_forecast_1, series="ARIMA Fourier, K=c(2,4)",PI=FALSE)+
+  autolayer(ARIMA_Four_forecast_XREG_1, series="ARIMA Fourier XREG, K=c(2,4)",PI=FALSE)
+  
 autoplot(msts_forecast) +
-  autolayer(ARIMA_Four_forecast_1, series="ARIMA Fourier",PI=FALSE)+
-  autolayer(ARIMA_Four_forecast_XREG_1, series="ARIMA Fourier XREG",PI=FALSE)
-autoplot(msts_forecast) +
-  autolayer(NN_forecast_1, series="Neural Network")
+  autolayer(NN_forecast_1, series="Neural Network, K=c(2,4)",ylim=c(-5000,15000))+
+  autolayer(NN_forecast_XREG_1, series="Neural network + XREG, K=c(2,4)",ylim=c(-5000,15000))
+  
 
 #K=c(2,12)
 autoplot(msts_forecast) +
   autolayer(ETS_fit, series="STL + ETS",PI=FALSE)
+
 autoplot(msts_forecast) +
-  autolayer(ARIMA_Four_forecast_2, series="ARIMA Fourier",PI=FALSE)+
-  autolayer(ARIMA_Four_forecast_XREG_2, series="ARIMA Fourier XREG",PI=FALSE)
+  autolayer(ARIMA_Four_forecast_2, series="ARIMA Fourier, K=c(2,12)",PI=FALSE)+
+  autolayer(ARIMA_Four_forecast_XREG_2, series="ARIMA Fourier XREG, K=c(2,12)",PI=FALSE)
+ #check: labs(ylim=c(-5000,15000))
+
 autoplot(msts_forecast) +
-  autolayer(NN_forecast_2, series="Neural Network")
+  autolayer(NN_forecast_2, series="Neural Network, K=c(2,12)")+
+  autolayer(NN_forecast_XREG_2, series="Neural network + XREG, K=c(2,12)")
 
 ```
 
@@ -443,11 +604,38 @@ resi_ARIMA_Four_XREG_1<-checkresiduals(ARIMA_Four_forecast_XREG_1)
 resi_ARIMA_Four_XREG_2<-checkresiduals(ARIMA_Four_forecast_XREG_2)
 resi_NN_forecast_1<-checkresiduals(NN_forecast_1)
 resi_NN_forecast_2<-checkresiduals(NN_forecast_2)
+resi_NN_forecast_XREG_1<-checkresiduals(NN_forecast_XREG_1)
+resi_NN_forecast_XREG_2<-checkresiduals(NN_forecast_XREG_2)
+```
+```{r SS}
+
+SS_ll <- StructTS(msts_training, type="level")
+SS_llt <- StructTS(msts_training, type="trend")
+SS_bsm <- StructTS(msts_training, type="BSM")
+
+SS_ll_for <- forecast(SS_ll,h=nfor)
+plot(SS_ll_for)
+
+
+SS_llt_for <- forecast(SS_llt,h=nfor)
+plot(SS_llt_for)
+
+
+SS_bsm_for <- forecast(SS_bsm,h=nfor)
+plot(SS_bsm_for)
+
+
 ```
 
 ```{r Accuracy}
 #Model1:ETS
 ETS_scores<-accuracy(ETS_fit$mean,msts_testing)
+
+#SS
+SS_llt_score <- accuracy(SS_llt_for$mean,msts_testing)
+SS_bsm_score <- accuracy(SS_bsm_for$mean,msts_testing)
+SS_ll_score <- accuracy(SS_ll_for$mean,msts_testing)
+
 
 #Model2: ARIMA + Fourier, K=c(2,4) 
 ARIMA_Four_forecast_scores_1<-accuracy(ARIMA_Four_forecast_1$mean,msts_testing)
@@ -455,38 +643,54 @@ ARIMA_Four_forecast_scores_1<-accuracy(ARIMA_Four_forecast_1$mean,msts_testing)
 #Model3: ARIMA + Fourier, K=c(2,12)
 ARIMA_Four_forecast_scores_2<-accuracy(ARIMA_Four_forecast_2$mean,msts_testing)
 
-#Model4: ARIMA + Fourier + exogenoue variable, K=c(2,4)
+#Model4: ARIMA + Fourier + exogenous variable, K=c(2,4)
 ARIMA_Four_XREG_scores_1<-accuracy(ARIMA_Four_forecast_XREG_1$mean,msts_testing)
 
-#Model5: ARIMA + Fourier + exogenoue variable, K=c(2,12)
+#Model5: ARIMA + Fourier + exogenous variable, K=c(2,12)
 ARIMA_Four_XREG_scores_2<-accuracy(ARIMA_Four_forecast_XREG_2$mean,msts_testing)
 
-#Model5: Neural network, K=c(2,4) 
+#Model6: Neural network, K=c(2,4) 
 NN_scores_1<-accuracy(NN_forecast_1$mean,msts_testing)
 
-#Model5: Neural network, K=c(2,12)
+#Model7: Neural network, K=c(2,12)
 NN_scores_2<-accuracy(NN_forecast_2$mean,msts_testing)
+
+#Model8: Neural network + exogenous variable, K=c(2,4) 
+NN_XREG_scores_1<-accuracy(NN_forecast_XREG_1$mean,msts_testing)
+
+#Model9: Neural network + exogenous variable, K=c(2,12)
+NN_XREG_scores_2<-accuracy(NN_forecast_XREG_2$mean,msts_testing)
 
 #create a data frame to store the scores 
 scores<-as.data.frame(rbind(ETS_scores,
+                            SS_llt_score,
+                            SS_bsm_score,
+                            SS_ll_score,
                             ARIMA_Four_forecast_scores_1,
                             ARIMA_Four_forecast_scores_2,
                             ARIMA_Four_XREG_scores_1,
                             ARIMA_Four_XREG_scores_2,
                             NN_scores_1,
-                            NN_scores_2))
+                            NN_scores_2,
+                            NN_XREG_scores_1,
+                            NN_XREG_scores_2))
 row.names(scores)<-c("ETS",
+                     "SS_LLT",
+                     "SS_bsm",
+                     "SS_ll",
                      "ARIMA+Fourier, K=c(2,4)",
                      "ARIMA+Fourier, K=c(2,12)",
                      "ARIMA+Fourier+XREG, K=c(2,4)",
                      "ARIMA+Fourier+XREG, K=c(2,12)",
                      "NN, K=c(2,4)",
-                     "NN, K=c(2,12)")
+                     "NN, K=c(2,12)",
+                     "NN+XREG, K=c(2,4)",
+                     "NN+XREG, K=c(2,12)")
 
 #create a comparable table 
 kbl(scores, 
-    caption = "Forecast Accuracy for Electricity Demand",
-    digits = array(7,ncol(scores))) %>%
+    caption = "Forecast Accuracy for Electricity Demand (2021-2022)",
+    digits = array(5,ncol(scores))) %>%
   kable_styling(full_width = FALSE, 
                 position = "center", 
                 latex_options = "hold_position")
@@ -496,27 +700,36 @@ kbl(scores,
 #best-performance model: NN, K=c(2,4) if using deseason series 
 #best-performance model: NN, K=c(2,12) if using original time series
 
-#assuming a forecasting horizon of ten years
+msts_demand_deseason<-msts(demand_deseason, seasonal.periods=c(7,365), start=c(2015,07,01))
+
+#assuming a forecasting horizon of 15 years
 NN_fit_all_1<-nnetar(msts_demand_deseason,
                    p=1,
                    P=0,
                    xreg=fourier(msts_demand_deseason,K=c(2,4)))
 
 NN_forecast_all_1<-forecast(NN_fit_all_1,
-                          xreg=fourier(msts_demand_deseason,K=c(2,4),h=365*10), 
-                          h=365*10)
+                          xreg=fourier(msts_demand_deseason,K=c(2,4),h=365*15), 
+                          h=365*15)
+
+#add seasonality back
+#question
+NN_forecast_all_1$mean<-NN_forecast_all_1$mean+demand_decompose$seasonal
 
 #add linear trend to prediction 
 forecast_length<-length(NN_forecast_all_1$mean)
 timeframe<-1:forecast_length
-growth_slope<-0.3 #literature review
+growth_slope<-0.11
 linear_trend<-timeframe*growth_slope
 NN_forecast_with_trend_1<-NN_forecast_all_1$mean + linear_trend
+
+
+
 
 #plot
 autoplot(msts_demand_deseason) +
   autolayer(NN_forecast_all_1$mean, series = "Original Forecast", color = "darkblue") +
-  autolayer(NN_forecast_with_trend_1, series = "Forecast with Trend", color = "orange") +
+  autolayer(NN_forecast_with_trend_1, series = "Forecast with Trend",color = "orange") +
   labs(title = "Original Time Series with Forecasted Series") +
   xlab("Time") +
   ylab("Electricity Demand (MWh)")
@@ -526,20 +739,20 @@ autoplot(msts_demand_deseason) +
 #best-performance model: NN, K=c(2,4) if using deseason series 
 #best-performance model: NN, K=c(2,12) if using original time series
 
-#assuming a forecasting horizon of ten years
+#assuming a forecasting horizon of 15 years
 NN_fit_all_2<-nnetar(msts_all[,7],
                    p=1,
                    P=0,
                    xreg=fourier(msts_all[,7],K=c(2,12)))
 
 NN_forecast_all_2<-forecast(NN_fit_all_2,
-                          xreg=fourier(msts_all[,7],K=c(2,12),h=365*10), 
-                          h=365*10)
+                          xreg=fourier(msts_all[,7],K=c(2,12),h=365*15), 
+                          h=365*15)
 
 #add linear trend to prediction 
 forecast_length<-length(NN_forecast_all_2$mean)
 timeframe<-1:forecast_length
-growth_slope<-0.3 #literature review
+growth_slope<-0.11
 linear_trend<-timeframe*growth_slope
 NN_forecast_with_trend_2<-NN_forecast_all_2$mean + linear_trend
 
@@ -551,3 +764,5 @@ autoplot(msts_all[,7]) +
   xlab("Time") +
   ylab("Electricity Demand (MWh)")
 ```
+
+

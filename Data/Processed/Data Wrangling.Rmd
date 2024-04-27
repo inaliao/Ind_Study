@@ -32,60 +32,51 @@ library(ggthemes)
 library(tidyr)
 ```
 
-```{r Import Data}
+```{r Import load data}
 here()
 raw_DUK<-read.csv(here('Data/Raw/load_DUK.csv'),stringsAsFactors = TRUE,skip=0,header=TRUE)
 head(raw_DUK)
 ```
+```{r Import weather data}
+df_2012<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2012.csv'),skip=2,stringsAsFactors = TRUE)
+df_2013<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2013.csv'),skip=2,stringsAsFactors = TRUE)
+df_2014<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2014.csv'),skip=2,stringsAsFactors = TRUE)
+df_2015<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2015.csv'),skip=2,stringsAsFactors = TRUE)
+df_2016<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2016.csv'),skip=2,stringsAsFactors = TRUE)
+df_2017<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2017.csv'),skip=2,stringsAsFactors = TRUE)
+df_2018<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2018.csv'),skip=2,stringsAsFactors = TRUE)
+df_2019<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2019.csv'),skip=2,stringsAsFactors = TRUE)
+df_2020<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2020.csv'),skip=2,stringsAsFactors = TRUE)
+df_2021<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2021.csv'),skip=2,stringsAsFactors = TRUE)
+df_2022<-read.csv(here('Data/Raw/weather data/1044988_35.21_-80.86_2022.csv'),skip=2,stringsAsFactors = TRUE)
 
-```{r Selected the needed data}
-df_DUK<-raw_DUK[,c(5,8,9,10,11,45,46,47,48,49,50,51,52,53)]
+raw_weather<-bind_rows(df_2012,df_2013,df_2014,df_2015,df_2016,df_2017,df_2018,df_2019,df_2020,df_2021,df_2022)
+raw_weather
+```
 
-#change the date format
+```{r Selected needed data - load}
+df_DUK<-raw_DUK[,c(5,8,9,10,11)]
+head(df_DUK)
+colnames(df_DUK)
+
+#rename column names 
+colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
+colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
+colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
+colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
+
+#change date format 
 df_DUK<-mutate(df_DUK,Local.Time=Local.time)
 df_DUK<-separate(data=df_DUK,col=Local.time,into=c("Date","Time"),sep=" ") 
 df_DUK$Date<-dmy(df_DUK$Date)
 df_DUK$Time<-hms(df_DUK$Time)
-
-#change the order
-df_DUK<-df_DUK[,c(1:2,16,3:15)]
-
-#rename column names 
-colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
-colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
-colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
-colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
-```
-
-```{r Import Data, echo=TRUE, results='hide'}
-raw_DUK<-read.csv(here('Data/Raw/load_DUK.csv'),stringsAsFactors = TRUE,skip=0,header=TRUE)
-head(raw_DUK)
-#column 45,46,47,48,49,50,51,52,53: electricity transmitted from other ISO/RTO
-
-raw_weather<-read.csv(here("Data/Processed Data/Processed_weather_2012-2022.xlsx"),stringsAsFactors = TRUE,skip=0,header=TRUE)
-head(raw_weather)
-```
-
-```{r Selected the needed data - Load}
-df_DUK<-raw_DUK[,c(3,5,8,9,10,11)]
-head(df_DUK)
-colnames(df_DUK)
-
-#change the date format as ymd
-df_DUK$Local.date<-dmy(df_DUK$Local.date)
-
-#combine date and time
-df_DUK$Local.time<-as.POSIXct(df_DUK$Local.time,format = "%d%b%Y %H:%M")
+df_DUK$Local.time<-as.POSIXct(df_DUK$Local.Time,format = "%d%b%Y %H:%M:%S")
 df_DUK$Local.time<-format(df_DUK$Local.time,"%Y-%m-%d %H:%M")
 
-#rename column names 
-colnames(df_DUK)[colnames(df_DUK)=="DF"]<-"Demand Forecast"
-colnames(df_DUK)[colnames(df_DUK)=="D"]<-"Demand"
-colnames(df_DUK)[colnames(df_DUK)=="NG"]<-"Net Generation"
-colnames(df_DUK)[colnames(df_DUK)=="TI"]<-"Total Interchange"
+df_DUK<-df_DUK[,c(1,2,8,3:6)]
 
 #set as numaric
-for (i in 3:6){
+for (i in 4:7){
   df_DUK[,i]<-as.numeric(df_DUK[,i])
 }
 
@@ -94,13 +85,13 @@ df_DUK<-df_DUK %>%
   mutate(Forecast.Error=`Demand Forecast`- Demand)
 
 #mutate calendar event
-df_DUK$day_of_week <- wday(df_DUK$Local.date, label = FALSE)
-df_DUK<-df_DUK[,c(1:2,8,3:7)]
-
+df_DUK$day_of_week <- wday(df_DUK$Date, label = FALSE)
+df_DUK<-df_DUK[,c(1:3,9,4:8)]
 head(df_DUK)
 ```
 
-```{r Select the needed data - Weather}
+
+```{r Select the needed data - weather}
 #change the date format as ymd
 raw_weather$Date<-paste(raw_weather$Year,raw_weather$Month,raw_weather$Day,sep="-")
 raw_weather$Date<-ymd(raw_weather$Date)
@@ -132,7 +123,6 @@ df_time_DUK$Local.time<-format(df_time_DUK$Local.time,"%Y-%m-%d %H:%M")
 
 #merge dataframes
 df_DUK_merge<-left_join(df_time_DUK,df_DUK,by="Local.time")
-head(df_DUK_merge)
 
 #check if there is missing data
 df_DUK_merge %>%
@@ -155,21 +145,21 @@ head(df_weather_merge)
 df_weather_merge %>%
   filter(is.na(Date)) 
 #missing the data on 2012-02-29, 2016-02-29, 2020-02-29
-#check if the NAs have been dropped in the dataframe df
+
+df_weather<- na.omit(df_weather)
+df_weather %>%
+  filter(is.na(Date)) 
 ```
 
 
 ```{r Daily Average - Load}
-#can't merge two datasets by time since the recorded hours are different (i.e., 01:00 and 01:30)
-#calculate the daily average then merge the dataframes
-
 #the outliers haven't been removed
 #the missing value will be removed when computing the mean
 
-df_daily_DUK<-df_DUK_merge %>%
+df_daily_DUK<-df_DUK %>%
   
   #calculate daily average
-  group_by(Local.date,day_of_week) %>%
+  group_by(Date,day_of_week) %>%
   summarize(
     demand_forecast=mean(`Demand Forecast`, na.rm=TRUE),
     demand=mean(Demand, na.rm=TRUE),
@@ -185,7 +175,7 @@ head(df_daily_DUK)
 
 ```{r Daily Average - Weather}
 standard_temp<-(65-32)*(5/9)
-df_daily_weather<-df_weather_merge %>%
+df_daily_weather<-df_weather %>%
   group_by(Date,day_of_week) %>%
   summarize(
     dew_point=mean(Dew.Point, na.rm=TRUE),
@@ -199,10 +189,7 @@ df_daily_weather<-df_weather_merge %>%
 head(df_daily_weather)
 ```
 
-
-
 ```{r Merge Daily Dataframe}
-colnames(df_daily_DUK)[colnames(df_daily_DUK) == "Local.date"] <- "Date"
 df_all<-left_join(df_daily_weather,df_daily_DUK,by="Date")
 
 #weather and load data have different starting and ending date 
@@ -221,4 +208,8 @@ df<-df_all %>%
 df<-df[,c(1,8,2,15,3:7,10:14)]
 head(df)
 tail(df) #last day is 2022-12-31	
+```
+
+```{r Export file}
+write.csv(df, file = "Data/Processed/Load_weather.csv",row.names = TRUE)
 ```
